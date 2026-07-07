@@ -28,6 +28,7 @@ Loom does not scrape credentials, pool browser sessions, automate password shari
 - Stable model aliases synced into LiteLLM dynamic model configuration.
 - Provider health checks against OpenAI-compatible `/v1/models`.
 - LiteLLM spend-log usage summaries by user and model.
+- Admin-only Activity Logs for user, project, model, key, client, token, cost, status, and prompt-preview/full-prompt inspection when explicitly enabled.
 - Manual usage ingestion endpoint for fallback or future log-forwarder workflows.
 - Budget records for monthly token and cost limits, plus default LiteLLM key budget fields.
 - Docker Compose stack for API, LiteLLM, Postgres, and Redis.
@@ -144,7 +145,9 @@ Required groups:
 - Static upstream bootstrap: `ROUTER_BASE_URL`, `ROUTER_API_KEY`, and `ROUTER_*_MODEL`
 - LiteLLM database: `LITELLM_DATABASE_URL`
 
-Optional values include `REDIS_URL`, `DEFAULT_KEY_MAX_BUDGET`, `DEFAULT_KEY_BUDGET_DURATION`, `DEFAULT_KEY_TPM_LIMIT`, and `DEFAULT_KEY_RPM_LIMIT`.
+Optional values include `REDIS_URL`, `DEFAULT_KEY_MAX_BUDGET`, `DEFAULT_KEY_BUDGET_DURATION`, `DEFAULT_KEY_TPM_LIMIT`, `DEFAULT_KEY_RPM_LIMIT`, and the `PROMPT_LOG_*` activity logging controls.
+
+Prompt logging defaults to metadata visibility with prompt/completion content disabled. See [docs/ACTIVITY_LOGS.md](docs/ACTIVITY_LOGS.md) and [docs/PROMPT_LOGS.md](docs/PROMPT_LOGS.md).
 
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full environment reference.
 

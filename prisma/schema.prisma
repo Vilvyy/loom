@@ -29,6 +29,12 @@ enum ProviderAuthType {
   none
 }
 
+enum ActivityLogSource {
+  litellm_spend_logs
+  loom_ingest
+  manual
+}
+
 model User {
   id          String        @id @default(cuid())
   email       String        @unique
@@ -38,6 +44,7 @@ model User {
   team        Team?         @relation(fields: [teamId], references: [id], onDelete: SetNull)
   keys        ApiKey[]
   usage       UsageRecord[]
+  activityLogs ActivityLog[]
   budgets     BudgetLimit[]
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
@@ -50,6 +57,8 @@ model Team {
   users     User[]
   keys      ApiKey[]
   usage     UsageRecord[]
+  projects  Project[]
+  activityLogs ActivityLog[]
   budgets   BudgetLimit[]
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
@@ -67,6 +76,8 @@ model ApiKey {
   user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   teamId       String?
   team         Team?          @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  defaultProjectId String?
+  defaultProject   Project?      @relation(fields: [defaultProjectId], references: [id], onDelete: SetNull)
   lastUsedAt   DateTime?
   revokedAt    DateTime?
   usage        UsageRecord[]
@@ -77,7 +88,25 @@ model ApiKey {
   @@index([litellmKeyId])
   @@index([userId])
   @@index([teamId])
+  @@index([defaultProjectId])
   @@index([status])
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  slug        String
+  teamId      String?
+  team        Team?         @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  description String?
+  keys        ApiKey[]
+  activityLogs ActivityLog[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([teamId, slug])
+  @@index([teamId])
+  @@index([slug])
 }
 
 model UsageRecord {
@@ -104,6 +133,51 @@ model UsageRecord {
   @@index([teamId, timestamp])
   @@index([model, timestamp])
   @@index([keyId, timestamp])
+}
+
+model ActivityLog {
+  id                 String            @id @default(cuid())
+  createdAt          DateTime          @default(now())
+  userId             String?
+  user               User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  teamId             String?
+  team               Team?             @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  keyId              String?
+  keyAlias           String?
+  model              String
+  provider           String
+  requestId          String?
+  projectId          String?
+  project            Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  projectName        String?
+  clientName         String?
+  clientVersion      String?
+  source             ActivityLogSource @default(litellm_spend_logs)
+  status             UsageStatus
+  latencyMs          Int?
+  promptTokens       Int               @default(0)
+  completionTokens   Int               @default(0)
+  totalTokens        Int               @default(0)
+  estimatedCost      Decimal           @default(0) @db.Decimal(18, 8)
+  category           String?
+  promptPreview      String?
+  completionPreview  String?
+  promptContent      String?
+  completionContent  String?
+  redactionApplied   Boolean           @default(false)
+  raw                Json?
+  expiresAt          DateTime
+
+  @@index([createdAt])
+  @@index([expiresAt])
+  @@index([userId, createdAt])
+  @@index([teamId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([keyAlias, createdAt])
+  @@index([model, createdAt])
+  @@index([provider, createdAt])
+  @@index([status, createdAt])
+  @@index([clientName, createdAt])
 }
 
 model BudgetLimit {

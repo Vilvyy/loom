@@ -1,8 +1,9 @@
-import { UsageStatus, Prisma } from '@prisma/client';
+import { ActivityLogSource, UsageStatus, Prisma } from '@prisma/client';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Env } from '../config/env.js';
 import type { PrismaLike } from '../db/prisma.js';
+import { createActivityLog } from '../services/activityLogService.js';
 import { normalizeUsageRecord } from '../services/usageService.js';
 
 const ingestUsageSchema = z.object({
@@ -18,9 +19,18 @@ const ingestUsageSchema = z.object({
   estimatedCost: z.number().nonnegative(),
   status: z.nativeEnum(UsageStatus),
   latencyMs: z.number().int().nonnegative().optional().nullable(),
+  keyAlias: z.string().min(1).optional().nullable(),
+  requestId: z.string().min(1).optional().nullable(),
+  projectId: z.string().min(1).optional().nullable(),
+  projectName: z.string().min(1).optional().nullable(),
+  clientName: z.string().min(1).optional().nullable(),
+  clientVersion: z.string().min(1).optional().nullable(),
+  category: z.string().min(1).optional().nullable(),
+  promptContent: z.string().optional().nullable(),
+  completionContent: z.string().optional().nullable(),
 });
 
-export async function ingestRoutes(app: FastifyInstance, prisma: PrismaLike, _env: Env) {
+export async function ingestRoutes(app: FastifyInstance, prisma: PrismaLike, env: Env) {
   app.addHook('onRequest', app.verifyAdmin);
 
   app.post('/usage', async (request, reply) => {
@@ -53,6 +63,35 @@ export async function ingestRoutes(app: FastifyInstance, prisma: PrismaLike, _en
         data: { lastUsedAt: normalized.timestamp },
       });
     }
+
+    await createActivityLog(
+      prisma,
+      {
+        createdAt: normalized.timestamp,
+        userId: normalized.userId,
+        keyId: normalized.keyId,
+        keyAlias: input.keyAlias,
+        teamId: normalized.teamId,
+        model: normalized.model,
+        provider: normalized.provider,
+        requestId: input.requestId,
+        projectId: input.projectId,
+        projectName: input.projectName,
+        clientName: input.clientName,
+        clientVersion: input.clientVersion,
+        source: ActivityLogSource.loom_ingest,
+        status: normalized.status as UsageStatus,
+        latencyMs: normalized.latencyMs,
+        promptTokens: normalized.promptTokens,
+        completionTokens: normalized.completionTokens,
+        totalTokens: normalized.totalTokens,
+        estimatedCost: normalized.estimatedCost,
+        category: input.category,
+        promptContent: input.promptContent,
+        completionContent: input.completionContent,
+      },
+      env,
+    );
 
     return reply.code(201).send({ ...usage, estimatedCost: usage.estimatedCost.toFixed(8) });
   });

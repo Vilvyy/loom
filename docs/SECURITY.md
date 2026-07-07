@@ -27,5 +27,7 @@ Loom must not implement credential scraping, quota bypassing, password sharing a
 - Keep `ADMIN_TOKEN`, `API_KEY_PEPPER`, `PROVIDER_SECRET_KEY`, `LITELLM_MASTER_KEY`, `LITELLM_SALT_KEY`, and provider API keys outside git.
 - Expose LiteLLM to developer tools; keep the admin API and dashboard behind VPN, IP allowlist, or upstream authentication.
 - Rotate LiteLLM keys and provider credentials after suspected compromise.
-- Keep prompt and completion logging disabled unless reviewed and approved for your environment.
-- Decide usage/audit retention before broad rollout.
+- Keep prompt content logging disabled unless reviewed and approved for your environment. The default is metadata-only activity visibility with no prompt or completion content.
+- Use `PROMPT_LOG_LEVEL=preview` or `full` only for explicit operational need, with redaction enabled and a short retention window.
+- Treat Activity Log detail views as sensitive. Loom audits detail access and full-prompt access without storing raw prompts in audit metadata.
+- Decide usage, activity, prompt, LiteLLM spend-log, and audit retention before broad rollout.

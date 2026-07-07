@@ -17,11 +17,89 @@ export type ApiKey = {
   status: 'active' | 'revoked' | string;
   userId: string;
   teamId?: string | null;
+  defaultProjectId?: string | null;
+  defaultProject?: Project | null;
   user?: Pick<User, 'id' | 'email' | 'name' | 'role'>;
   team?: { id: string; slug: string; name: string } | null;
   lastUsedAt?: string | null;
   revokedAt?: string | null;
   createdAt?: string;
+};
+
+export type Project = {
+  id: string;
+  name: string;
+  slug: string;
+  teamId?: string | null;
+  description?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  team?: { id: string; slug: string; name: string } | null;
+};
+
+export type ActivityLogStatus = {
+  enabled: boolean;
+  level: 'off' | 'metadata' | 'preview' | 'full';
+  retentionDays: number;
+  previewChars: number;
+  redactionEnabled: boolean;
+  storeCompletions: boolean;
+  auditDetailView: boolean;
+  cleanupEnabled: boolean;
+  cleanupCron: string;
+  requireProjectTag: boolean;
+};
+
+export type ActivityLog = {
+  id: string;
+  createdAt: string;
+  userId?: string | null;
+  user?: Pick<User, 'id' | 'email' | 'name' | 'role'> | null;
+  teamId?: string | null;
+  team?: { id: string; slug: string; name: string } | null;
+  keyAlias?: string | null;
+  model: string;
+  provider: string;
+  requestId?: string | null;
+  projectId?: string | null;
+  projectName?: string | null;
+  project?: Project | null;
+  clientName?: string | null;
+  clientVersion?: string | null;
+  source: string;
+  status: string;
+  latencyMs?: number | null;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  estimatedCost: string | number;
+  category?: string | null;
+  promptPreview?: string | null;
+  completionPreview?: string | null;
+  promptContent?: string | null;
+  completionContent?: string | null;
+  redactionApplied: boolean;
+  expiresAt: string;
+  raw?: unknown;
+  contentAvailable?: {
+    preview: boolean;
+    fullPrompt: boolean;
+    completion: boolean;
+  };
+};
+
+export type ActivityLogList = {
+  items: ActivityLog[];
+  nextCursor?: string | null;
+};
+
+export type ActivitySummary = {
+  requests: number;
+  activeUsers: number;
+  activeProjects: number;
+  tokens: number;
+  estimatedCost: string | number;
+  suspiciousOrErrorRequests: number;
 };
 
 export type Provider = {
@@ -206,6 +284,38 @@ export const api = {
     if (query.source) params.set('source', query.source);
     return request<Usage>(token, `/usage${params.toString() ? `?${params.toString()}` : ''}`);
   },
+  getActivityStatus: (token: string) => request<ActivityLogStatus>(token, '/activity-logs/status'),
+  getProjects: (token: string) => request<Project[]>(token, '/projects'),
+  createProject: (
+    token: string,
+    payload: { name: string; slug?: string; teamId?: string | null; description?: string | null },
+  ) => request<Project>(token, '/projects', { method: 'POST', body: JSON.stringify(payload) }),
+  getActivityLogs: (token: string, query: Record<string, string | undefined>) => {
+    const params = new URLSearchParams();
+    Object.entries(query).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+    });
+    return request<ActivityLogList>(
+      token,
+      `/activity-logs${params.toString() ? `?${params.toString()}` : ''}`,
+    );
+  },
+  getActivitySummary: (token: string, query: Record<string, string | undefined>) => {
+    const params = new URLSearchParams();
+    Object.entries(query).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+    });
+    return request<ActivitySummary>(
+      token,
+      `/activity-logs/summary${params.toString() ? `?${params.toString()}` : ''}`,
+    );
+  },
+  getActivityLog: (token: string, id: string) =>
+    request<ActivityLog>(token, `/activity-logs/${id}`),
+  cleanupActivityLogs: (token: string) =>
+    request<{ deleted: number; cleanedAt: string }>(token, '/activity-logs/cleanup-expired', {
+      method: 'POST',
+    }),
   createUser: (
     token: string,
     payload: { email: string; name: string; team?: { slug: string; name: string } },

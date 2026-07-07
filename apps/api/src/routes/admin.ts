@@ -5,6 +5,17 @@ import { z } from 'zod';
 import type { Env } from '../config/env.js';
 import type { PrismaLike } from '../db/prisma.js';
 import { monthWindow } from '../services/budgetService.js';
+import {
+  activityLogStatus,
+  cleanupExpiredActivityLogs,
+  createActivityLog,
+  getActivityLogDetail,
+  listActivityLogs,
+  normalizeLiteLlmActivity,
+  slugify,
+  summarizeActivityLogs,
+  type ActivityLogFilters,
+} from '../services/activityLogService.js';
 import type { LiteLlmAdminClient } from '../services/litellmAdminClient.js';
 import {
   aggregateLiteLlmUsage,
@@ -41,6 +52,7 @@ const createKeySchema = z.object({
   userId: z.string().min(1),
   teamId: z.string().min(1).optional(),
   name: z.string().min(1).default('default'),
+  defaultProjectId: z.string().min(1).optional(),
   maxBudget: z.number().positive().optional(),
   budgetDuration: z.string().min(1).optional(),
   tpmLimit: z.number().int().positive().optional(),
@@ -58,6 +70,44 @@ const createBudgetSchema = z.object({
   teamId: z.string().min(1).optional(),
   monthlyTokenLimit: z.number().int().positive().optional(),
   monthlyCostLimit: z.number().positive().optional(),
+});
+
+const activityLogQuerySchema = z.object({
+  userId: z.string().min(1).optional(),
+  teamId: z.string().min(1).optional(),
+  keyAlias: z.string().min(1).optional(),
+  projectId: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  provider: z.string().min(1).optional(),
+  status: z.nativeEnum(UsageStatus).optional(),
+  clientName: z.string().min(1).optional(),
+  category: z.string().min(1).optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().min(1).optional(),
+});
+
+const createProjectSchema = z.object({
+  name: z.string().min(1),
+  slug: z
+    .string()
+    .min(1)
+    .regex(/^[a-z0-9][a-z0-9-]*$/)
+    .optional(),
+  teamId: z.string().min(1).optional().nullable(),
+  description: z.string().min(1).optional().nullable(),
+});
+
+const updateProjectSchema = z.object({
+  name: z.string().min(1).optional(),
+  slug: z
+    .string()
+    .min(1)
+    .regex(/^[a-z0-9][a-z0-9-]*$/)
+    .optional(),
+  teamId: z.string().min(1).optional().nullable(),
+  description: z.string().min(1).optional().nullable(),
 });
 
 const createProviderSchema = z.object({
@@ -264,6 +314,174 @@ export async function adminRoutes(
     return listAuditEvents(prisma, query.limit);
   });
 
+  app.get('/activity-logs/status', async () => activityLogStatus(env));
+
+  app.get('/activity-logs/summary', async (request) => {
+    const query = activityLogQuerySchema.omit({ limit: true, cursor: true }).parse(request.query);
+    await recordAuditEvent(prisma, {
+      action: 'activity_log.list',
+      targetType: 'activity_log',
+      result: 'success',
+      message: 'Activity log summary viewed.',
+      metadata: { filters: query },
+    });
+    return summarizeActivityLogs(prisma, query);
+  });
+
+  app.get('/activity-logs', async (request) => {
+    const query = activityLogQuerySchema.parse(request.query);
+    await ensureLiteLlmActivityBackfill(prisma, env, litellmAdmin, query);
+    await recordAuditEvent(prisma, {
+      action: 'activity_log.list',
+      targetType: 'activity_log',
+      result: 'success',
+      message: 'Activity logs listed.',
+      metadata: { filters: query },
+    });
+    return listActivityLogs(prisma, query);
+  });
+
+  app.get('/activity-logs/:id', async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    if (!env.PROMPT_LOGS_ENABLED) {
+      await recordAuditEvent(prisma, {
+        action: 'activity_log.disabled_access_attempt',
+        targetType: 'activity_log',
+        targetId: params.id,
+        result: 'blocked',
+        message: 'Activity log detail requested while prompt logs are disabled.',
+      });
+    }
+
+    const detail = await getActivityLogDetail(prisma, params.id, env);
+    if (!detail) {
+      return reply.code(404).send({
+        error: structuredError(
+          'ACTIVITY_LOG_NOT_FOUND',
+          'Activity log was not found.',
+          'Refresh activity logs and retry.',
+          false,
+        ),
+      });
+    }
+
+    if (env.PROMPT_LOG_AUDIT_DETAIL_VIEW) {
+      await recordAuditEvent(prisma, {
+        action: 'activity_log.view_detail',
+        targetType: 'activity_log',
+        targetId: params.id,
+        targetLabel: detail.requestId ?? detail.id,
+        result: 'success',
+        message: 'Activity log detail viewed.',
+        metadata: {
+          userId: detail.userId,
+          teamId: detail.teamId,
+          projectId: detail.projectId,
+          model: detail.model,
+          contentAvailable: detail.contentAvailable,
+        },
+      });
+      if (detail.contentAvailable.fullPrompt) {
+        await recordAuditEvent(prisma, {
+          action: 'activity_log.view_full_prompt',
+          targetType: 'activity_log',
+          targetId: params.id,
+          targetLabel: detail.requestId ?? detail.id,
+          result: 'success',
+          message: 'Full prompt viewed.',
+          metadata: {
+            userId: detail.userId,
+            teamId: detail.teamId,
+            projectId: detail.projectId,
+            model: detail.model,
+          },
+        });
+      }
+    }
+
+    return detail;
+  });
+
+  app.post('/activity-logs/cleanup-expired', async () => {
+    const result = await cleanupExpiredActivityLogs(prisma);
+    await recordAuditEvent(prisma, {
+      action: 'activity_log.retention_cleanup',
+      targetType: 'activity_log',
+      result: 'success',
+      message: `Deleted ${result.deleted} expired activity logs.`,
+      metadata: result,
+    });
+    return result;
+  });
+
+  app.post('/projects', async (request, reply) => {
+    const input = createProjectSchema.parse(request.body);
+    const project = await prisma.project.create({
+      data: {
+        name: input.name,
+        slug: input.slug ?? slugify(input.name),
+        teamId: input.teamId ?? null,
+        description: input.description ?? null,
+      },
+    });
+    return reply.code(201).send(project);
+  });
+
+  app.get('/projects', async () =>
+    prisma.project.findMany({
+      include: { team: { select: { id: true, slug: true, name: true } } },
+      orderBy: { createdAt: 'desc' },
+    }),
+  );
+
+  app.patch('/projects/:id', async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const input = updateProjectSchema.parse(request.body);
+    const existing = await prisma.project.findUnique({ where: { id: params.id } });
+    if (!existing) {
+      return reply.code(404).send({
+        error: structuredError(
+          'PROJECT_NOT_FOUND',
+          'Project was not found.',
+          'Refresh projects and retry.',
+          false,
+        ),
+      });
+    }
+
+    return prisma.project.update({
+      where: { id: params.id },
+      data: {
+        name: input.name,
+        slug: input.slug,
+        teamId: input.teamId,
+        description: input.description,
+      },
+    });
+  });
+
+  app.delete('/projects/:id', async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const existing = await prisma.project.findUnique({ where: { id: params.id } });
+    if (!existing) {
+      return reply.code(404).send({
+        error: structuredError(
+          'PROJECT_NOT_FOUND',
+          'Project was not found.',
+          'Refresh projects and retry.',
+          false,
+        ),
+      });
+    }
+
+    await prisma.apiKey.updateMany({
+      where: { defaultProjectId: params.id },
+      data: { defaultProjectId: null },
+    });
+    await prisma.project.delete({ where: { id: params.id } });
+    return { id: params.id, deleted: true };
+  });
+
   app.post('/users', async (request, reply) => {
     const input = createUserSchema.parse(request.body);
     const team =
@@ -340,6 +558,7 @@ export async function adminRoutes(
           name: input.name,
           userId: input.userId,
           teamId,
+          defaultProjectId: input.defaultProjectId,
         },
         select: {
           id: true,
@@ -350,6 +569,7 @@ export async function adminRoutes(
           status: true,
           userId: true,
           teamId: true,
+          defaultProjectId: true,
           createdAt: true,
         },
       });
@@ -1209,6 +1429,8 @@ async function listKeys(prisma: PrismaLike, litellmAdmin: LiteLlmAdminClient) {
       teamId: true,
       user: { select: { id: true, email: true, name: true, role: true } },
       team: { select: { id: true, slug: true, name: true } },
+      defaultProjectId: true,
+      defaultProject: { select: { id: true, name: true, slug: true, teamId: true } },
       lastUsedAt: true,
       revokedAt: true,
       createdAt: true,
@@ -1703,6 +1925,34 @@ async function getLiteLlmUsage(
 ) {
   const logs = await litellmAdmin.getSpendLogs(query);
   return logs.map(normalizeLiteLlmSpendLog).filter((record) => record !== null);
+}
+
+async function ensureLiteLlmActivityBackfill(
+  prisma: PrismaLike,
+  env: Env,
+  litellmAdmin: LiteLlmAdminClient,
+  query: ActivityLogFilters,
+) {
+  const existing = await prisma.activityLog.count({
+    where: {
+      source: 'litellm_spend_logs',
+      createdAt:
+        query.from || query.to
+          ? {
+              gte: query.from ? new Date(query.from) : undefined,
+              lt: query.to ? new Date(query.to) : undefined,
+            }
+          : undefined,
+    },
+  });
+  if (existing > 0) return;
+
+  const logs = await litellmAdmin.getSpendLogs({ from: query.from, to: query.to });
+  for (const log of logs.slice(0, 250)) {
+    const activity = normalizeLiteLlmActivity(log);
+    if (!activity) continue;
+    await createActivityLog(prisma, activity, env);
+  }
 }
 
 function latestLiteLlmUsageByKey(records: Awaited<ReturnType<typeof getLiteLlmUsage>>) {

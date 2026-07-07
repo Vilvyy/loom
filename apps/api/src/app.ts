@@ -8,6 +8,7 @@ import { adminRoutes } from './routes/admin.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { healthRoutes } from './routes/health.js';
 import { ingestRoutes } from './routes/ingest.js';
+import { cleanupExpiredActivityLogs } from './services/activityLogService.js';
 import { HttpLiteLlmAdminClient, type LiteLlmAdminClient } from './services/litellmAdminClient.js';
 
 export async function buildApp(
@@ -33,6 +34,7 @@ export async function buildApp(
     prefix: '/admin',
   });
   await app.register(async (scoped) => ingestRoutes(scoped, prisma, env), { prefix: '/ingest' });
+  registerActivityLogCleanup(app, prisma, env);
 
   app.setErrorHandler((error: FastifyError & { issues?: unknown }, _request, reply) => {
     if (error.issues) {
@@ -59,6 +61,19 @@ export async function buildApp(
   });
 
   return app;
+}
+
+function registerActivityLogCleanup(app: FastifyInstance, prisma: PrismaLike, env: Env) {
+  if (!env.PROMPT_LOG_CLEANUP_ENABLED) return;
+
+  const runCleanup = () => {
+    cleanupExpiredActivityLogs(prisma).catch((error) => {
+      app.log.warn({ error }, 'activity log retention cleanup failed');
+    });
+  };
+  const timer = setInterval(runCleanup, 24 * 60 * 60 * 1000);
+  timer.unref();
+  app.addHook('onClose', async () => clearInterval(timer));
 }
 
 function registerJsonParser(app: FastifyInstance) {

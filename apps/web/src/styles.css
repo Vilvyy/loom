@@ -224,6 +224,21 @@ textarea {
   min-height: 140px;
   resize: vertical;
 }
+.truncate {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+.raw-json summary {
+  color: var(--brand);
+  font-weight: 750;
+}
+.detail-drawer {
+  border-color: var(--info-border);
+}
 
 .app {
   min-height: 100vh;
@@ -451,6 +466,12 @@ textarea {
 }
 .grid.four {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.grid.five {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.grid.six {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 .stack {
   margin-top: 16px;
@@ -1307,6 +1328,8 @@ button.sort {
   .grid.two,
   .grid.three,
   .grid.four,
+  .grid.five,
+  .grid.six,
   .flow-grid {
     grid-template-columns: 1fr;
   }

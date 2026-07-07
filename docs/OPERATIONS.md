@@ -127,9 +127,40 @@ curl http://localhost:3000/admin/usage -H "Authorization: Bearer $ADMIN_TOKEN"
 
 Use `?source=local` only for manually ingested records or future log forwarder debugging.
 
+## Activity Logs
+
+Open the Activity Logs tab in the admin dashboard or call:
+
+```bash
+curl http://localhost:3000/admin/activity-logs \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+Create a project for attribution:
+
+```bash
+curl -s http://localhost:3000/admin/projects \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Billing Console","slug":"billing-console","teamId":"TEAM_ID"}'
+```
+
+Request metadata can override a key default project with `x-loom-project`, `x-loom-client`, `x-loom-repo`, or LiteLLM metadata fields `project`, `client`, and `repo`. Missing project attribution is shown as `Unassigned`.
+
 ## Data Retention
 
-The MVP does not implement automated retention. For production, set a retention target for `UsageRecord` rows and export daily/monthly aggregate reports before pruning.
+Activity logs use `expiresAt`, calculated from `PROMPT_LOG_RETENTION_DAYS`. Manual cleanup:
+
+```bash
+curl -X POST http://localhost:3000/admin/activity-logs/cleanup-expired \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+When `PROMPT_LOG_CLEANUP_ENABLED=true`, the API process also runs a daily cleanup timer. `PROMPT_LOG_CLEANUP_CRON` is exposed for operator configuration and documentation, but the in-process scheduler currently runs daily.
+
+LiteLLM spend-log cleanup is operator-managed. Configure LiteLLM/database retention separately if LiteLLM spend logs must expire on the same schedule.
+
+For production, also set a retention target for `UsageRecord` rows and export daily/monthly aggregate reports before pruning.
 
 ## Fallback Test Path
 

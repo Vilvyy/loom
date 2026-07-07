@@ -3,6 +3,7 @@ import {
   BarChart3,
   Check,
   Copy,
+  FileSearch,
   KeyRound,
   LayoutDashboard,
   Loader2,
@@ -24,6 +25,9 @@ import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useS
 import {
   api,
   ApiKey,
+  ActivityLog,
+  ActivityLogStatus,
+  ActivitySummary,
   DashboardData,
   ModelAlias,
   Provider,
@@ -33,7 +37,7 @@ import {
   User,
 } from './api';
 
-type Tab = 'overview' | 'keys' | 'providers' | 'aliases' | 'usage' | 'settings';
+type Tab = 'overview' | 'keys' | 'providers' | 'aliases' | 'usage' | 'activity' | 'settings';
 type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'off';
 type SortDir = 'asc' | 'desc';
 type SortState = { key: string; dir: SortDir };
@@ -108,6 +112,12 @@ const nav: Array<{ id: Tab; label: string; description: string; icon: ReactNode 
     label: 'Usage',
     description: 'Monitor request volume, token usage, cost, and attribution.',
     icon: <BarChart3 />,
+  },
+  {
+    id: 'activity',
+    label: 'Activity Logs',
+    description: 'Inspect admin-only AI activity by user, project, model, and client.',
+    icon: <FileSearch />,
   },
   {
     id: 'settings',
@@ -429,6 +439,7 @@ export function App() {
               onRetry={refresh}
             />
           )}
+          {tab === 'activity' && <ActivityLogs token={token} notify={notify} data={data} />}
           {tab === 'settings' && (
             <SettingsView token={token} clearSession={clearSession} notify={notify} />
           )}
@@ -1536,6 +1547,378 @@ function Usage({
   );
 }
 
+function ActivityLogs({
+  token,
+  notify,
+  data,
+}: {
+  token: string;
+  notify: (message: string, tone?: Tone) => void;
+  data: DashboardData;
+}) {
+  const [status, setStatus] = useState<ActivityLogStatus | null>(null);
+  const [summary, setSummary] = useState<ActivitySummary | null>(null);
+  const [rows, setRows] = useState<ActivityLog[]>([]);
+  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [selected, setSelected] = useState<ActivityLog | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [sort, setSort] = useState<SortState>({ key: 'createdAt', dir: 'desc' });
+  const [filters, setFilters] = useState({
+    from: '',
+    to: '',
+    userId: '',
+    projectId: '',
+    model: '',
+    keyAlias: '',
+    status: '',
+    clientName: '',
+  });
+  const sorted = useMemo(
+    () => sortRows(rows as unknown as Record<string, unknown>[], sort),
+    [rows, sort],
+  ) as unknown as ActivityLog[];
+
+  const query = () => ({
+    ...filters,
+    from: filters.from ? new Date(filters.from).toISOString() : undefined,
+    to: filters.to ? new Date(filters.to).toISOString() : undefined,
+    limit: '50',
+  });
+
+  const refreshActivity = async () => {
+    if (!token.trim()) return notify('Enter the admin token before loading activity logs.', 'warn');
+    setLoading(true);
+    try {
+      const [nextStatus, nextSummary, nextRows, nextProjects] = await Promise.all([
+        api.getActivityStatus(token),
+        api.getActivitySummary(token, query()),
+        api.getActivityLogs(token, query()),
+        api.getProjects(token),
+      ]);
+      setStatus(nextStatus);
+      setSummary(nextSummary);
+      setRows(nextRows.items);
+      setProjects(nextProjects.map((project) => ({ id: project.id, name: project.name })));
+    } catch (error) {
+      notify(
+        `Activity logs failed to load. ${error instanceof Error ? error.message : ''}`,
+        'danger',
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshActivity();
+  }, []);
+
+  const openDetail = async (row: ActivityLog) => {
+    setDetailLoading(true);
+    try {
+      setSelected(await api.getActivityLog(token, row.id));
+    } catch (error) {
+      notify(
+        `Activity detail failed to load. ${error instanceof Error ? error.message : ''}`,
+        'danger',
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const cleanup = async () => {
+    try {
+      const result = await api.cleanupActivityLogs(token);
+      notify(`Deleted ${result.deleted} expired activity log${result.deleted === 1 ? '' : 's'}.`);
+      await refreshActivity();
+    } catch (error) {
+      notify(`Cleanup failed. ${error instanceof Error ? error.message : ''}`, 'danger');
+    }
+  };
+
+  return (
+    <div className="stack">
+      <Panel
+        title="Activity Status"
+        subtitle="Prompt content is stored only when explicitly enabled by environment."
+      >
+        <div className="grid five">
+          <Metric
+            label="Logging"
+            value={status?.enabled ? 'Enabled' : 'Disabled'}
+            badge={
+              <Badge tone={status?.enabled ? 'ok' : 'off'}>{status?.level || 'metadata'}</Badge>
+            }
+          />
+          <Metric label="Retention" value={`${status?.retentionDays ?? 7} days`} />
+          <Metric
+            label="Redaction"
+            value={status?.redactionEnabled === false ? 'Off' : 'On'}
+            badge={<Badge tone={status?.redactionEnabled === false ? 'warn' : 'ok'}>Default</Badge>}
+          />
+          <Metric
+            label="Completions"
+            value={status?.storeCompletions ? 'Stored' : 'Off'}
+            badge={<Badge tone={status?.storeCompletions ? 'warn' : 'ok'}>Content</Badge>}
+          />
+          <Metric label="Cleanup" value={status?.cleanupEnabled === false ? 'Off' : 'On'} />
+        </div>
+        {!status?.enabled && (
+          <div className="notice warn">
+            Prompt logging is disabled. Activity can still show usage metadata from LiteLLM spend
+            logs when available.
+          </div>
+        )}
+      </Panel>
+
+      <div className="grid six">
+        <Metric label="Requests" value={summary?.requests || 0} />
+        <Metric label="Active users" value={summary?.activeUsers || 0} />
+        <Metric label="Active projects" value={summary?.activeProjects || 0} />
+        <Metric label="Tokens" value={summary?.tokens || 0} />
+        <Metric label="Estimated cost" value={formatMoney(summary?.estimatedCost || 0)} />
+        <Metric
+          label="Suspicious/errors"
+          value={summary?.suspiciousOrErrorRequests || 0}
+          badge={
+            <Badge tone={summary?.suspiciousOrErrorRequests ? 'warn' : 'ok'}>
+              {summary?.suspiciousOrErrorRequests ? 'Review' : 'Clear'}
+            </Badge>
+          }
+        />
+      </div>
+
+      <Panel
+        className="stack"
+        title="Activity Logs"
+        subtitle="Filter by user, project, model, key, status, and client."
+      >
+        <div className="leaderboard-controls">
+          <label className="field">
+            <span>From</span>
+            <input
+              type="date"
+              value={filters.from}
+              onChange={(event) => setFilters({ ...filters, from: event.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>To</span>
+            <input
+              type="date"
+              value={filters.to}
+              onChange={(event) => setFilters({ ...filters, to: event.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>User</span>
+            <SearchableSelect
+              value={filters.userId}
+              onChange={(value) => setFilters({ ...filters, userId: value })}
+              options={[
+                { value: '', label: 'All users' },
+                ...data.users.map((user) => ({ value: user.id, label: user.name || user.email })),
+              ]}
+            />
+          </label>
+          <label className="field">
+            <span>Project</span>
+            <SearchableSelect
+              value={filters.projectId}
+              onChange={(value) => setFilters({ ...filters, projectId: value })}
+              options={[
+                { value: '', label: 'All projects' },
+                ...projects.map((project) => ({ value: project.id, label: project.name })),
+              ]}
+            />
+          </label>
+          <label className="field">
+            <span>Status</span>
+            <SearchableSelect
+              value={filters.status}
+              onChange={(value) => setFilters({ ...filters, status: value })}
+              options={[
+                { value: '', label: 'All statuses' },
+                { value: 'success', label: 'Success' },
+                { value: 'error', label: 'Error' },
+                { value: 'rate_limited', label: 'Rate limited' },
+                { value: 'budget_exceeded', label: 'Budget exceeded' },
+              ]}
+            />
+          </label>
+          <label className="field">
+            <span>Model</span>
+            <input
+              value={filters.model}
+              onChange={(event) => setFilters({ ...filters, model: event.target.value })}
+              placeholder="code-premium"
+            />
+          </label>
+          <label className="field">
+            <span>Key</span>
+            <input
+              value={filters.keyAlias}
+              onChange={(event) => setFilters({ ...filters, keyAlias: event.target.value })}
+              placeholder="tlg_..."
+            />
+          </label>
+          <label className="field">
+            <span>Client</span>
+            <input
+              value={filters.clientName}
+              onChange={(event) => setFilters({ ...filters, clientName: event.target.value })}
+              placeholder="codex"
+            />
+          </label>
+        </div>
+        <div className="actions">
+          <Button
+            icon={<RefreshCw />}
+            onClick={refreshActivity}
+            loading={loading}
+            disabled={loading}
+          >
+            {loading ? 'Loading activity' : 'Refresh activity'}
+          </Button>
+          <Button tone="utility" icon={<AlertTriangle />} onClick={cleanup}>
+            Cleanup expired
+          </Button>
+          {detailLoading && <PendingBadge>Opening detail...</PendingBadge>}
+        </div>
+        <DataTable
+          empty={
+            status?.enabled === false
+              ? 'Activity metadata is not loaded yet. Refresh to pull LiteLLM spend logs.'
+              : 'No activity logs match the current filters.'
+          }
+          rows={sorted as unknown as Record<string, unknown>[]}
+          sort={sort}
+          setSort={setSort}
+          columns={[
+            {
+              key: 'createdAt',
+              label: 'Time',
+              render: (row) => <RelativeTime value={row.createdAt as string} />,
+            },
+            {
+              key: 'user',
+              label: 'User',
+              render: (row) => activityUser(row as unknown as ActivityLog),
+            },
+            {
+              key: 'projectName',
+              label: 'Project',
+              render: (row) => String((row as unknown as ActivityLog).projectName || 'Unassigned'),
+            },
+            {
+              key: 'clientName',
+              label: 'Client',
+              render: (row) => activityClient(row as unknown as ActivityLog),
+            },
+            { key: 'model', label: 'Model', className: 'mono' },
+            {
+              key: 'status',
+              label: 'Status',
+              render: (row) => (
+                <Badge tone={activityStatusTone(String(row.status))}>
+                  {titleCase(String(row.status))}
+                </Badge>
+              ),
+            },
+            { key: 'totalTokens', label: 'Tokens' },
+            {
+              key: 'estimatedCost',
+              label: 'Cost',
+              render: (row) => formatMoney(row.estimatedCost),
+            },
+            {
+              key: 'promptPreview',
+              label: 'Prompt preview',
+              sortable: false,
+              render: (row) => (
+                <span className="truncate">{String(row.promptPreview || 'No prompt content')}</span>
+              ),
+            },
+            {
+              key: 'action',
+              label: 'Action',
+              sortable: false,
+              render: (row) => (
+                <Button tone="utility" onClick={() => openDetail(row as unknown as ActivityLog)}>
+                  Inspect
+                </Button>
+              ),
+            },
+          ]}
+        />
+      </Panel>
+
+      {selected && <ActivityDetail log={selected} close={() => setSelected(null)} />}
+    </div>
+  );
+}
+
+function ActivityDetail({ log, close }: { log: ActivityLog; close: () => void }) {
+  return (
+    <Panel
+      className="stack detail-drawer"
+      title={`Activity detail: ${log.requestId || log.id}`}
+      subtitle="Detail access is audited when enabled. Raw prompt content is omitted unless full logging is enabled."
+    >
+      <div className="actions">
+        <Button tone="utility" onClick={close}>
+          Close
+        </Button>
+      </div>
+      <div className="grid three">
+        <Metric label="Project" value={log.projectName || 'Unassigned'} />
+        <Metric label="Tokens" value={log.totalTokens || 0} />
+        <Metric label="Cost" value={formatMoney(log.estimatedCost)} />
+      </div>
+      <RecordDetails
+        rows={[
+          ['User', log.user?.email || log.userId || 'Unknown'],
+          ['Team', log.team?.name || log.teamId || 'None'],
+          ['Client', activityClient(log)],
+          ['Model', log.model],
+          ['Provider', log.provider],
+          ['Status', log.status],
+          ['Latency', log.latencyMs == null ? 'Unknown' : `${log.latencyMs} ms`],
+          ['Source', log.source],
+          ['Expires', formatDate(log.expiresAt)],
+          ['Redaction applied', log.redactionApplied ? 'yes' : 'no'],
+        ]}
+      />
+      <Panel title="Prompt Preview">
+        <pre className="callout mono">
+          {log.promptPreview || 'No prompt preview stored for this log.'}
+        </pre>
+      </Panel>
+      <Panel title="Completion Preview">
+        <pre className="callout mono">
+          {log.completionPreview || 'No completion preview stored for this log.'}
+        </pre>
+      </Panel>
+      <details className="raw-json">
+        <summary>Full prompt</summary>
+        <pre className="callout mono">
+          {log.promptContent || 'Full prompt is not available for this logging level.'}
+        </pre>
+      </details>
+      <details className="raw-json">
+        <summary>Raw JSON</summary>
+        <pre className="callout mono">{JSON.stringify(log.raw || {}, null, 2)}</pre>
+      </details>
+      <div className="notice">
+        Viewing this detail may write an audit event. Audit metadata never includes raw prompt
+        content.
+      </div>
+    </Panel>
+  );
+}
+
 function SettingsView({
   token,
   clearSession,
@@ -2549,6 +2932,21 @@ function RelativeTime({
 
 function usageUserId(row: UsageGroup) {
   return row.user?.id || (typeof row.userId === 'string' ? row.userId : 'unknown');
+}
+
+function activityUser(row: ActivityLog) {
+  return row.user?.name || row.user?.email || row.userId || 'Unknown';
+}
+
+function activityClient(row: ActivityLog) {
+  return [row.clientName, row.clientVersion].filter(Boolean).join('@') || 'Unknown';
+}
+
+function activityStatusTone(status: string): Tone {
+  if (status === 'success') return 'ok';
+  if (status === 'error' || status === 'budget_exceeded') return 'danger';
+  if (status === 'rate_limited') return 'warn';
+  return 'info';
 }
 
 function usageUserLabel(row: UsageGroup) {
