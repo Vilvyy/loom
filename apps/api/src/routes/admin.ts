@@ -65,6 +65,14 @@ const usageQuerySchema = z.object({
   source: z.enum(['litellm', 'local']).default('litellm'),
 });
 
+const usageMaxDays = 90;
+const usageLogLimit = 2_000;
+
+const listQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().min(1).optional(),
+});
+
 const createBudgetSchema = z.object({
   userId: z.string().min(1).optional(),
   teamId: z.string().min(1).optional(),
@@ -249,24 +257,25 @@ export async function adminRoutes(
     const params = z
       .object({ section: z.enum(['users', 'providers', 'aliases', 'keys', 'usage']) })
       .parse(request.params);
+    const query = listQuerySchema.parse(request.query);
     const started = Date.now();
 
     try {
       if (params.section === 'users') {
-        return withMeta(await listUsers(prisma), 'database', started);
+        return withMeta(await listUsers(prisma, query), 'database', started);
       }
       if (params.section === 'providers') {
-        return withMeta(await listProviders(prisma), 'provider-registry', started);
+        return withMeta(await listProviders(prisma, query), 'provider-registry', started);
       }
       if (params.section === 'aliases') {
-        return withMeta(await listAliases(prisma), 'provider-registry', started);
+        return withMeta(await listAliases(prisma, query), 'provider-registry', started);
       }
       if (params.section === 'keys') {
-        return withMeta(await listKeys(prisma, litellmAdmin), 'litellm-local-metadata', started);
+        return withMeta(await listKeys(prisma, query), 'database', started);
       }
 
       return withMeta(
-        await getUsageSummary(prisma, litellmAdmin, { source: 'litellm' }),
+        await getUsageSummary(prisma, litellmAdmin, boundedUsageQuery({ source: 'litellm' })),
         'litellm',
         started,
       );
@@ -308,16 +317,15 @@ export async function adminRoutes(
   });
 
   app.get('/audit-events', async (request) => {
-    const query = z
-      .object({ limit: z.coerce.number().int().min(1).max(100).default(50) })
-      .parse(request.query);
-    return listAuditEvents(prisma, query.limit);
+    return listAuditEvents(prisma, listQuerySchema.parse(request.query));
   });
 
   app.get('/activity-logs/status', async () => activityLogStatus(env));
 
   app.get('/activity-logs/summary', async (request) => {
-    const query = activityLogQuerySchema.omit({ limit: true, cursor: true }).parse(request.query);
+    const query = boundedActivityQuery(
+      activityLogQuerySchema.omit({ limit: true, cursor: true }).parse(request.query),
+    );
     await recordAuditEvent(prisma, {
       action: 'activity_log.list',
       targetType: 'activity_log',
@@ -329,8 +337,7 @@ export async function adminRoutes(
   });
 
   app.get('/activity-logs', async (request) => {
-    const query = activityLogQuerySchema.parse(request.query);
-    await ensureLiteLlmActivityBackfill(prisma, env, litellmAdmin, query);
+    const query = boundedActivityQuery(activityLogQuerySchema.parse(request.query));
     await recordAuditEvent(prisma, {
       action: 'activity_log.list',
       targetType: 'activity_log',
@@ -427,12 +434,16 @@ export async function adminRoutes(
     return reply.code(201).send(project);
   });
 
-  app.get('/projects', async () =>
-    prisma.project.findMany({
+  app.get('/projects', async (request) => {
+    const query = listQuerySchema.parse(request.query);
+    return paginate(
+      await prisma.project.findMany({
       include: { team: { select: { id: true, slug: true, name: true } } },
-      orderBy: { createdAt: 'desc' },
+      ...cursorPage(query),
     }),
-  );
+      query.limit,
+    );
+  });
 
   app.patch('/projects/:id', async (request, reply) => {
     const params = z.object({ id: z.string().min(1) }).parse(request.params);
@@ -505,7 +516,7 @@ export async function adminRoutes(
     return reply.code(201).send(user);
   });
 
-  app.get('/users', async () => listUsers(prisma));
+  app.get('/users', async (request) => listUsers(prisma, listQuerySchema.parse(request.query)));
 
   app.post('/keys', async (request, reply) => {
     const input = createKeySchema.parse(request.body);
@@ -583,7 +594,7 @@ export async function adminRoutes(
     return reply.code(201).send({ ...key, apiKey: virtualKey.key });
   });
 
-  app.get('/keys', async () => listKeys(prisma, litellmAdmin));
+  app.get('/keys', async (request) => listKeys(prisma, listQuerySchema.parse(request.query)));
 
   app.post('/keys/:id/revoke', async (request, reply) => {
     const params = z.object({ id: z.string().min(1) }).parse(request.params);
@@ -674,12 +685,12 @@ export async function adminRoutes(
   });
 
   app.get('/usage', async (request) => {
-    const query = usageQuerySchema.parse(request.query);
+    const query = boundedUsageQuery(usageQuerySchema.parse(request.query));
     return getUsageSummary(prisma, litellmAdmin, query);
   });
 
   app.get('/usage/by-user', async (request) => {
-    const query = usageQuerySchema.parse(request.query);
+    const query = boundedUsageQuery(usageQuerySchema.parse(request.query));
     if (query.source === 'litellm') {
       return groupLiteLlmUsage(await getLiteLlmUsage(litellmAdmin, query), 'userId');
     }
@@ -695,7 +706,7 @@ export async function adminRoutes(
   });
 
   app.get('/usage/by-model', async (request) => {
-    const query = usageQuerySchema.parse(request.query);
+    const query = boundedUsageQuery(usageQuerySchema.parse(request.query));
     if (query.source === 'litellm') {
       return groupLiteLlmUsage(await getLiteLlmUsage(litellmAdmin, query), 'model');
     }
@@ -739,12 +750,13 @@ export async function adminRoutes(
       .send({ ...budget, monthlyCostLimit: decimalToString(budget.monthlyCostLimit) });
   });
 
-  app.get('/budgets', async () => {
+  app.get('/budgets', async (request) => {
+    const query = listQuerySchema.parse(request.query);
     const budgets = await prisma.budgetLimit.findMany({
-      orderBy: { createdAt: 'desc' },
+      ...cursorPage(query),
     });
 
-    return budgets.map((budget) => ({
+    return paginate(budgets, query.limit, (budget) => ({
       ...budget,
       monthlyCostLimit: decimalToString(budget.monthlyCostLimit),
     }));
@@ -782,7 +794,9 @@ export async function adminRoutes(
     return reply.code(201).send(provider);
   });
 
-  app.get('/providers', async () => listProviders(prisma));
+  app.get('/providers', async (request) =>
+    listProviders(prisma, listQuerySchema.parse(request.query)),
+  );
 
   app.patch('/providers/:id', async (request, reply) => {
     const params = z.object({ id: z.string().min(1) }).parse(request.params);
@@ -1095,7 +1109,9 @@ export async function adminRoutes(
     return reply.code(201).send(formatModelAlias(alias));
   });
 
-  app.get('/model-aliases', async () => listAliases(prisma));
+  app.get('/model-aliases', async (request) =>
+    listAliases(prisma, listQuerySchema.parse(request.query)),
+  );
 
   app.post('/model-aliases/sync-all', async () => {
     const aliases = await prisma.modelAlias.findMany({
@@ -1393,30 +1409,54 @@ function providerSelect() {
   } as const;
 }
 
-async function listUsers(prisma: PrismaLike) {
-  return prisma.user.findMany({
+type ListQuery = z.infer<typeof listQuerySchema>;
+
+function cursorPage(query: ListQuery) {
+  return {
+    orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }],
+    take: query.limit + 1,
+    ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+  };
+}
+
+function paginate<T extends { id: string }>(
+  rows: T[],
+  limit: number,
+  map: (row: T) => unknown = (row) => row,
+) {
+  const items = rows.slice(0, limit).map(map);
+  return {
+    items,
+    nextCursor: rows.length > limit ? rows[limit - 1]?.id ?? null : null,
+  };
+}
+
+async function listUsers(prisma: PrismaLike, query: ListQuery) {
+  const rows = await prisma.user.findMany({
     include: { team: true },
-    orderBy: { createdAt: 'desc' },
+    ...cursorPage(query),
   });
+  return paginate(rows, query.limit);
 }
 
-async function listProviders(prisma: PrismaLike) {
-  return prisma.provider.findMany({
+async function listProviders(prisma: PrismaLike, query: ListQuery) {
+  const rows = await prisma.provider.findMany({
     select: providerSelect(),
-    orderBy: { createdAt: 'desc' },
+    ...cursorPage(query),
   });
+  return paginate(rows, query.limit);
 }
 
-async function listAliases(prisma: PrismaLike) {
+async function listAliases(prisma: PrismaLike, query: ListQuery) {
   const aliases = await prisma.modelAlias.findMany({
     include: { provider: true },
-    orderBy: { createdAt: 'desc' },
+    ...cursorPage(query),
   });
 
-  return aliases.map(formatModelAlias);
+  return paginate(aliases, query.limit, formatModelAlias);
 }
 
-async function listKeys(prisma: PrismaLike, litellmAdmin: LiteLlmAdminClient) {
+async function listKeys(prisma: PrismaLike, query: ListQuery) {
   const keys = await prisma.apiKey.findMany({
     select: {
       id: true,
@@ -1435,35 +1475,9 @@ async function listKeys(prisma: PrismaLike, litellmAdmin: LiteLlmAdminClient) {
       revokedAt: true,
       createdAt: true,
     },
-    orderBy: { createdAt: 'desc' },
+    ...cursorPage(query),
   });
-
-  let latestUsageByKey: Map<string, Date>;
-  try {
-    latestUsageByKey = latestLiteLlmUsageByKey(await getLiteLlmUsage(litellmAdmin, {}));
-  } catch {
-    return keys;
-  }
-
-  const updates: Array<Promise<unknown>> = [];
-  for (const key of keys) {
-    const latest = latestKeyUsage(key, latestUsageByKey);
-    if (!latest || !isAfter(latest, key.lastUsedAt)) {
-      continue;
-    }
-
-    key.lastUsedAt = latest;
-    updates.push(
-      prisma.apiKey.update({
-        where: { id: key.id },
-        data: { lastUsedAt: latest },
-        select: { id: true },
-      }),
-    );
-  }
-
-  await Promise.allSettled(updates);
-  return keys;
+  return paginate(keys, query.limit);
 }
 
 async function getUsageSummary(
@@ -1508,13 +1522,15 @@ async function getUsageSummary(
         estimatedCost: true,
       },
       orderBy: { timestamp: 'asc' },
+      take: usageLogLimit + 1,
     }),
   ]);
 
   return {
     source: 'local',
     totals: rollup(grouped),
-    byDay: dailyRollup(dailyRecords),
+    byDay: dailyRollup(dailyRecords.slice(0, usageLogLimit)),
+    dailyRollupTruncated: dailyRecords.length > usageLogLimit,
     byStatus: grouped.map((row) => ({
       status: row.status,
       requests: row._count._all,
@@ -1524,6 +1540,30 @@ async function getUsageSummary(
       estimatedCost: decimalToString(row._sum.estimatedCost),
     })),
   };
+}
+
+function boundedUsageQuery(query: z.infer<typeof usageQuerySchema>) {
+  const to = query.to ? new Date(query.to) : new Date();
+  const from = query.from ? new Date(query.from) : new Date(to.valueOf() - 30 * 24 * 60 * 60 * 1000);
+  const durationDays = (to.valueOf() - from.valueOf()) / (24 * 60 * 60 * 1000);
+
+  if (durationDays < 0 || durationDays > usageMaxDays) {
+    throw new Error(`Usage range must be between 0 and ${usageMaxDays} days.`);
+  }
+
+  return { ...query, from: from.toISOString(), to: to.toISOString() };
+}
+
+function boundedActivityQuery<T extends { from?: string; to?: string }>(query: T) {
+  const to = query.to ? new Date(query.to) : new Date();
+  const from = query.from ? new Date(query.from) : new Date(to.valueOf() - 30 * 24 * 60 * 60 * 1000);
+  const durationDays = (to.valueOf() - from.valueOf()) / (24 * 60 * 60 * 1000);
+
+  if (durationDays < 0 || durationDays > usageMaxDays) {
+    throw new Error(`Activity range must be between 0 and ${usageMaxDays} days.`);
+  }
+
+  return { ...query, from: from.toISOString(), to: to.toISOString() };
 }
 
 function withMeta<T>(data: T, source: string, started: number) {
@@ -1666,13 +1706,11 @@ async function recordAuditEvent(
   });
 }
 
-async function listAuditEvents(prisma: PrismaLike, limit: number) {
+async function listAuditEvents(prisma: PrismaLike, query: ListQuery) {
   const delegate = optionalDelegate(prisma, 'auditEvent');
-  if (!delegate?.findMany) return [];
-  return delegate.findMany({
-    orderBy: { createdAt: 'desc' },
-    take: limit,
-  });
+  if (!delegate?.findMany) return { items: [], nextCursor: null };
+  const rows = (await delegate.findMany(cursorPage(query))) as Array<{ id: string }>;
+  return paginate(rows, query.limit);
 }
 
 function optionalDelegate(prisma: PrismaLike, key: 'adminOperation' | 'auditEvent') {
@@ -1923,8 +1961,8 @@ async function getLiteLlmUsage(
   litellmAdmin: LiteLlmAdminClient,
   query: { from?: string; to?: string },
 ) {
-  const logs = await litellmAdmin.getSpendLogs(query);
-  return logs.map(normalizeLiteLlmSpendLog).filter((record) => record !== null);
+  const logs = await litellmAdmin.getSpendLogs({ ...query, limit: usageLogLimit });
+  return logs.slice(0, usageLogLimit).map(normalizeLiteLlmSpendLog).filter((record) => record !== null);
 }
 
 async function ensureLiteLlmActivityBackfill(

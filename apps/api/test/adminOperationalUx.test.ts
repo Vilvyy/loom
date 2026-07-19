@@ -49,7 +49,7 @@ describe('admin operational UX endpoints', () => {
     const section = await app.inject({ method: 'GET', url: '/admin/dashboard/providers', headers });
     expect(section.statusCode).toBe(200);
     expect(section.json()).toMatchObject({
-      data: [{ id: 'provider-1', slug: 'company-ai' }],
+      data: { items: [{ id: 'provider-1', slug: 'company-ai' }], nextCursor: null },
       meta: { source: 'provider-registry', stale: false },
     });
 
@@ -76,7 +76,7 @@ describe('admin operational UX endpoints', () => {
 
     const audit = await app.inject({ method: 'GET', url: '/admin/audit-events', headers });
     expect(audit.statusCode).toBe(200);
-    expect(audit.json()[0]).toMatchObject({
+    expect(audit.json().items[0]).toMatchObject({
       action: 'provider.disable',
       targetLabel: 'company-ai',
       result: 'success',

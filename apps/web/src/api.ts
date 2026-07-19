@@ -93,6 +93,11 @@ export type ActivityLogList = {
   nextCursor?: string | null;
 };
 
+export type PaginatedList<T> = {
+  items: T[];
+  nextCursor?: string | null;
+};
+
 export type ActivitySummary = {
   requests: number;
   activeUsers: number;
@@ -182,6 +187,7 @@ export type DashboardData = {
   aliases: ModelAlias[];
   keys: ApiKey[];
   usage: Usage | null;
+  nextCursors: Partial<Record<Exclude<SectionKey, 'usage'>, string | null>>;
 };
 
 export type DashboardResult = {
@@ -248,14 +254,16 @@ export const api = {
   getClientConfig: (token: string) => request<ClientConfig>(token, '/client-config'),
   getDashboard: async (token: string): Promise<DashboardResult> => {
     const entries = await Promise.allSettled([
-      request<User[]>(token, '/users'),
-      request<Provider[]>(token, '/providers'),
-      request<ModelAlias[]>(token, '/model-aliases'),
-      request<ApiKey[]>(token, '/keys'),
+      request<PaginatedList<User>>(token, '/users?limit=50'),
+      request<PaginatedList<Provider>>(token, '/providers?limit=50'),
+      request<PaginatedList<ModelAlias>>(token, '/model-aliases?limit=50'),
+      request<PaginatedList<ApiKey>>(token, '/keys?limit=50'),
       request<Usage>(token, '/usage'),
     ]);
     const keys: SectionKey[] = ['users', 'providers', 'aliases', 'keys', 'usage'];
-    const data: DashboardData = { users: [], providers: [], aliases: [], keys: [], usage: null };
+    const data: DashboardData = {
+      users: [], providers: [], aliases: [], keys: [], usage: null, nextCursors: {},
+    };
     const errors: Partial<Record<SectionKey, string>> = {};
 
     entries.forEach((entry, index) => {
@@ -265,10 +273,26 @@ export const api = {
         return;
       }
 
-      if (key === 'users') data.users = entry.value as User[];
-      if (key === 'providers') data.providers = entry.value as Provider[];
-      if (key === 'aliases') data.aliases = entry.value as ModelAlias[];
-      if (key === 'keys') data.keys = entry.value as ApiKey[];
+      if (key === 'users') {
+        const page = entry.value as PaginatedList<User>;
+        data.users = page.items;
+        data.nextCursors.users = page.nextCursor ?? null;
+      }
+      if (key === 'providers') {
+        const page = entry.value as PaginatedList<Provider>;
+        data.providers = page.items;
+        data.nextCursors.providers = page.nextCursor ?? null;
+      }
+      if (key === 'aliases') {
+        const page = entry.value as PaginatedList<ModelAlias>;
+        data.aliases = page.items;
+        data.nextCursors.aliases = page.nextCursor ?? null;
+      }
+      if (key === 'keys') {
+        const page = entry.value as PaginatedList<ApiKey>;
+        data.keys = page.items;
+        data.nextCursors.keys = page.nextCursor ?? null;
+      }
       if (key === 'usage') data.usage = entry.value as Usage;
     });
 
@@ -285,7 +309,18 @@ export const api = {
     return request<Usage>(token, `/usage${params.toString() ? `?${params.toString()}` : ''}`);
   },
   getActivityStatus: (token: string) => request<ActivityLogStatus>(token, '/activity-logs/status'),
-  getProjects: (token: string) => request<Project[]>(token, '/projects'),
+  getProjects: (token: string) => request<PaginatedList<Project>>(token, '/projects?limit=100'),
+  getUsers: (token: string, cursor?: string | null) =>
+    request<PaginatedList<User>>(token, `/users?limit=50${cursor ? `&cursor=${cursor}` : ''}`),
+  getKeys: (token: string, cursor?: string | null) =>
+    request<PaginatedList<ApiKey>>(token, `/keys?limit=50${cursor ? `&cursor=${cursor}` : ''}`),
+  getProviders: (token: string, cursor?: string | null) =>
+    request<PaginatedList<Provider>>(token, `/providers?limit=50${cursor ? `&cursor=${cursor}` : ''}`),
+  getAliases: (token: string, cursor?: string | null) =>
+    request<PaginatedList<ModelAlias>>(
+      token,
+      `/model-aliases?limit=50${cursor ? `&cursor=${cursor}` : ''}`,
+    ),
   createProject: (
     token: string,
     payload: { name: string; slug?: string; teamId?: string | null; description?: string | null },

@@ -73,7 +73,9 @@ type ModalState =
   | { kind: 'rotate'; provider: Provider; affectedAliases: number }
   | { kind: 'details'; title: string; body: ReactNode };
 
-const emptyData: DashboardData = { users: [], providers: [], aliases: [], keys: [], usage: null };
+const emptyData: DashboardData = {
+  users: [], providers: [], aliases: [], keys: [], usage: null, nextCursors: {},
+};
 const tokenKey = 'tlg_admin_token';
 const sidebarCollapsedKey = 'tlg_sidebar_collapsed';
 const themeKey = 'tlg_theme';
@@ -219,6 +221,14 @@ export function App() {
         aliases: result.errors.aliases ? previous.aliases : result.data.aliases,
         keys: result.errors.keys ? previous.keys : result.data.keys,
         usage: result.errors.usage ? previous.usage : result.data.usage,
+        nextCursors: {
+          ...previous.nextCursors,
+          ...Object.fromEntries(
+            (['users', 'providers', 'aliases', 'keys'] as const)
+              .filter((section) => !result.errors[section])
+              .map((section) => [section, result.data.nextCursors[section]]),
+          ),
+        },
       }));
       setSectionStates((previous) => {
         const next = { ...previous };
@@ -656,7 +666,25 @@ function Keys({
 }) {
   const [filters, setFilters] = useState({ q: '', status: 'all' });
   const [sort, setSort] = useState<SortState>({ key: 'createdAt', dir: 'desc' });
-  const rows = useRows(data.keys, filters, sort, [
+  const [keys, setKeys] = useState(data.keys);
+  const [nextCursor, setNextCursor] = useState<string | null>(data.nextCursors.keys ?? null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  useEffect(() => {
+    setKeys(data.keys);
+    setNextCursor(data.nextCursors.keys ?? null);
+  }, [data.keys, data.nextCursors.keys]);
+  const loadMore = async () => {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    try {
+      const page = await api.getKeys(token, nextCursor);
+      setKeys((items) => [...items, ...page.items]);
+      setNextCursor(page.nextCursor ?? null);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+  const rows = useRows(keys, filters, sort, [
     'name',
     'prefix',
     (key) => key.user?.email || data.users.find((user) => user.id === key.userId)?.email,
@@ -898,6 +926,9 @@ function Keys({
             },
           ]}
           rows={rows}
+          hasMore={Boolean(nextCursor)}
+          onLoadMore={() => void loadMore()}
+          loadingMore={loadingMore}
         />
       </Panel>
     </>
@@ -928,7 +959,25 @@ function Providers({
 }) {
   const [filters, setFilters] = useState({ q: '', status: 'all' });
   const [sort, setSort] = useState<SortState>({ key: 'slug', dir: 'asc' });
-  const rows = useRows(data.providers, filters, sort, ['slug', 'name', 'baseUrl', 'healthStatus']);
+  const [providers, setProviders] = useState(data.providers);
+  const [nextCursor, setNextCursor] = useState<string | null>(data.nextCursors.providers ?? null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  useEffect(() => {
+    setProviders(data.providers);
+    setNextCursor(data.nextCursors.providers ?? null);
+  }, [data.providers, data.nextCursors.providers]);
+  const loadMore = async () => {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    try {
+      const page = await api.getProviders(token, nextCursor);
+      setProviders((items) => [...items, ...page.items]);
+      setNextCursor(page.nextCursor ?? null);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+  const rows = useRows(providers, filters, sort, ['slug', 'name', 'baseUrl', 'healthStatus']);
 
   const createProvider = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1125,6 +1174,9 @@ function Providers({
             },
           ]}
           rows={rows}
+          hasMore={Boolean(nextCursor)}
+          onLoadMore={() => void loadMore()}
+          loadingMore={loadingMore}
         />
       </Panel>
     </>
@@ -1155,7 +1207,25 @@ function Aliases({
 }) {
   const [filters, setFilters] = useState({ q: '', status: 'all' });
   const [sort, setSort] = useState<SortState>({ key: 'alias', dir: 'asc' });
-  const rows = useRows(data.aliases, filters, sort, [
+  const [aliases, setAliases] = useState(data.aliases);
+  const [nextCursor, setNextCursor] = useState<string | null>(data.nextCursors.aliases ?? null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  useEffect(() => {
+    setAliases(data.aliases);
+    setNextCursor(data.nextCursors.aliases ?? null);
+  }, [data.aliases, data.nextCursors.aliases]);
+  const loadMore = async () => {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    try {
+      const page = await api.getAliases(token, nextCursor);
+      setAliases((items) => [...items, ...page.items]);
+      setNextCursor(page.nextCursor ?? null);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+  const rows = useRows(aliases, filters, sort, [
     'alias',
     'upstreamModel',
     (alias) => alias.provider?.slug,
@@ -1318,6 +1388,9 @@ function Aliases({
             },
           ]}
           rows={rows}
+          hasMore={Boolean(nextCursor)}
+          onLoadMore={() => void loadMore()}
+          loadingMore={loadingMore}
         />
       </Panel>
     </>
@@ -1559,6 +1632,8 @@ function ActivityLogs({
   const [status, setStatus] = useState<ActivityLogStatus | null>(null);
   const [summary, setSummary] = useState<ActivitySummary | null>(null);
   const [rows, setRows] = useState<ActivityLog[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
   const [selected, setSelected] = useState<ActivityLog | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1599,7 +1674,8 @@ function ActivityLogs({
       setStatus(nextStatus);
       setSummary(nextSummary);
       setRows(nextRows.items);
-      setProjects(nextProjects.map((project) => ({ id: project.id, name: project.name })));
+      setNextCursor(nextRows.nextCursor ?? null);
+      setProjects(nextProjects.items.map((project) => ({ id: project.id, name: project.name })));
     } catch (error) {
       notify(
         `Activity logs failed to load. ${error instanceof Error ? error.message : ''}`,
@@ -1607,6 +1683,23 @@ function ActivityLogs({
       );
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMore = async () => {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    try {
+      const page = await api.getActivityLogs(token, { ...query(), cursor: nextCursor });
+      setRows((items) => [...items, ...page.items]);
+      setNextCursor(page.nextCursor ?? null);
+    } catch (error) {
+      notify(
+        `More activity logs failed to load. ${error instanceof Error ? error.message : ''}`,
+        'danger',
+      );
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -1790,10 +1883,13 @@ function ActivityLogs({
         <DataTable
           empty={
             status?.enabled === false
-              ? 'Activity metadata is not loaded yet. Refresh to pull LiteLLM spend logs.'
+              ? 'Activity metadata is not available yet. Enable or ingest activity logging first.'
               : 'No activity logs match the current filters.'
           }
           rows={sorted as unknown as Record<string, unknown>[]}
+          hasMore={Boolean(nextCursor)}
+          onLoadMore={() => void loadMore()}
+          loadingMore={loadingMore}
           sort={sort}
           setSort={setSort}
           columns={[
@@ -2521,6 +2617,9 @@ function DataTable<T extends Record<string, unknown>>({
   sort,
   setSort,
   empty,
+  onLoadMore,
+  hasMore = false,
+  loadingMore = false,
 }: {
   rows: T[];
   columns: Array<{
@@ -2533,6 +2632,9 @@ function DataTable<T extends Record<string, unknown>>({
   sort: SortState;
   setSort: (sort: SortState) => void;
   empty: string;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
 }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -2618,6 +2720,11 @@ function DataTable<T extends Record<string, unknown>>({
         >
           Next
         </Button>
+        {hasMore && onLoadMore && (
+          <Button onClick={onLoadMore} loading={loadingMore} disabled={loadingMore}>
+            Load 50 more
+          </Button>
+        )}
       </div>
     </>
   );

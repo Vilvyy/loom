@@ -114,7 +114,7 @@ describe('admin key routes', () => {
     await app.close();
   });
 
-  it('hydrates key last used from LiteLLM spend logs', async () => {
+  it('lists key metadata without loading LiteLLM spend logs', async () => {
     const litellm = new MockLiteLlmAdminClient();
     litellm.spendLogs = [
       {
@@ -138,18 +138,16 @@ describe('admin key routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()[0]).toMatchObject({
+    expect(response.json().items[0]).toMatchObject({
       id: 'key-1',
-      lastUsedAt: '2026-06-30T02:00:00.000Z',
+      lastUsedAt: null,
     });
-    expect(prisma.apiKey.updatePayloads.at(-1)?.data).toEqual({
-      lastUsedAt: new Date('2026-06-30T02:00:00.000Z'),
-    });
+    expect(prisma.apiKey.updatePayloads).toEqual([]);
 
     await app.close();
   });
 
-  it('keeps key listing available when LiteLLM spend logs fail', async () => {
+  it('keeps key listing independent of LiteLLM availability', async () => {
     const litellm = new MockLiteLlmAdminClient();
     litellm.failSpendLogs = true;
     const app = await buildApp(env, createMockPrisma(), litellm);
@@ -161,7 +159,29 @@ describe('admin key routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()[0]).toMatchObject({ id: 'key-1', lastUsedAt: null });
+    expect(response.json().items[0]).toMatchObject({ id: 'key-1', lastUsedAt: null });
+
+    await app.close();
+  });
+
+  it('uses a bounded cursor query for key listings', async () => {
+    const prisma = createMockPrisma();
+    const app = await buildApp(env, prisma, new MockLiteLlmAdminClient());
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/keys?limit=1&cursor=key-previous',
+      headers: { authorization: `Bearer ${env.ADMIN_TOKEN}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(prisma.apiKey.findManyPayload).toMatchObject({
+      take: 2,
+      cursor: { id: 'key-previous' },
+      skip: 1,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+    expect(response.json()).toMatchObject({ items: [{ id: 'key-1' }], nextCursor: null });
 
     await app.close();
   });
@@ -238,6 +258,7 @@ function createMockPrisma(options: { failCreate?: boolean } = {}) {
       createPayload: null as { data: Record<string, unknown> } | null,
       updatePayload: null as { data: Record<string, unknown> } | null,
       updatePayloads: [] as Array<{ data: Record<string, unknown> }>,
+      findManyPayload: null as Record<string, unknown> | null,
       create: async (payload: { data: Record<string, unknown> }) => {
         if (options.failCreate) {
           throw new Error('local insert failed');
@@ -261,7 +282,9 @@ function createMockPrisma(options: { failCreate?: boolean } = {}) {
         litellmKeyAlias: 'tlg_mock_alias',
         status: 'active',
       }),
-      findMany: async () => [
+      findMany: async (payload: Record<string, unknown>) => {
+        prisma.apiKey.findManyPayload = payload;
+        return [
         {
           id: 'key-1',
           prefix: 'sk',
@@ -277,7 +300,8 @@ function createMockPrisma(options: { failCreate?: boolean } = {}) {
           revokedAt: null,
           createdAt: new Date('2026-06-30T00:00:00.000Z'),
         },
-      ],
+        ];
+      },
       update: async (payload: { data: Record<string, unknown> }) => {
         prisma.apiKey.updatePayload = payload;
         prisma.apiKey.updatePayloads.push(payload);

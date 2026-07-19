@@ -246,7 +246,7 @@ export async function listActivityLogs(prisma: PrismaLike, filters: ActivityLogF
   const rows = await prisma.activityLog.findMany({
     where: activityWhere(filters),
     include: activityLogInclude(),
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: filters.limit + 1,
     ...(filters.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {}),
   });

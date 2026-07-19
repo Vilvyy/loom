@@ -36,6 +36,7 @@ export interface LiteLlmAdminClient {
 export type LiteLlmSpendLogQuery = {
   from?: string;
   to?: string;
+  limit?: number;
 };
 
 export function buildLiteLlmKeyPayload(input: LiteLlmCreateVirtualKeyInput) {
@@ -154,6 +155,11 @@ export class HttpLiteLlmAdminClient implements LiteLlmAdminClient {
     }
     if (query.to) {
       params.set('end_date', query.to.slice(0, 10));
+    }
+    if (query.limit) {
+      // LiteLLM versions that support page_size limit the remote response; older
+      // versions safely ignore this parameter and still preserve compatibility.
+      params.set('page_size', String(query.limit));
     }
 
     const body = await this.request('GET', `/spend/logs?${params.toString()}`);

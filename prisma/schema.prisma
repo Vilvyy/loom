@@ -48,6 +48,8 @@ model User {
   budgets     BudgetLimit[]
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
+
+  @@index([createdAt, id])
 }
 
 model Team {
@@ -90,6 +92,7 @@ model ApiKey {
   @@index([teamId])
   @@index([defaultProjectId])
   @@index([status])
+  @@index([createdAt, id])
 }
 
 model Project {
@@ -107,6 +110,7 @@ model Project {
   @@unique([teamId, slug])
   @@index([teamId])
   @@index([slug])
+  @@index([createdAt, id])
 }
 
 model UsageRecord {
@@ -178,6 +182,7 @@ model ActivityLog {
   @@index([provider, createdAt])
   @@index([status, createdAt])
   @@index([clientName, createdAt])
+  @@index([createdAt, id])
 }
 
 model BudgetLimit {
@@ -196,6 +201,7 @@ model BudgetLimit {
   @@index([userId])
   @@index([teamId])
   @@index([active])
+  @@index([createdAt, id])
 }
 
 model Provider {
@@ -214,6 +220,7 @@ model Provider {
   updatedAt       DateTime         @updatedAt
 
   @@index([enabled])
+  @@index([createdAt, id])
 }
 
 model ModelAlias {
@@ -231,6 +238,7 @@ model ModelAlias {
   @@index([providerId])
   @@index([enabled])
   @@index([lastSyncedAt])
+  @@index([createdAt, id])
 }
 
 model AdminOperation {
