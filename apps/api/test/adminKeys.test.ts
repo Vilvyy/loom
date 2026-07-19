@@ -285,21 +285,26 @@ function createMockPrisma(options: { failCreate?: boolean } = {}) {
       findMany: async (payload: Record<string, unknown>) => {
         prisma.apiKey.findManyPayload = payload;
         return [
-        {
-          id: 'key-1',
-          prefix: 'sk',
-          litellmKeyAlias: 'tlg_mock_alias',
-          litellmKeyId: 'token-1',
-          name: 'codex',
-          status: 'active',
-          userId: 'user-1',
-          teamId: 'team-1',
-          user: { id: 'user-1', email: 'dev@example.com', name: 'Dev Example', role: 'developer' },
-          team: { id: 'team-1', slug: 'engineering', name: 'Engineering' },
-          lastUsedAt: null,
-          revokedAt: null,
-          createdAt: new Date('2026-06-30T00:00:00.000Z'),
-        },
+          {
+            id: 'key-1',
+            prefix: 'sk',
+            litellmKeyAlias: 'tlg_mock_alias',
+            litellmKeyId: 'token-1',
+            name: 'codex',
+            status: 'active',
+            userId: 'user-1',
+            teamId: 'team-1',
+            user: {
+              id: 'user-1',
+              email: 'dev@example.com',
+              name: 'Dev Example',
+              role: 'developer',
+            },
+            team: { id: 'team-1', slug: 'engineering', name: 'Engineering' },
+            lastUsedAt: null,
+            revokedAt: null,
+            createdAt: new Date('2026-06-30T00:00:00.000Z'),
+          },
         ];
       },
       update: async (payload: { data: Record<string, unknown> }) => {

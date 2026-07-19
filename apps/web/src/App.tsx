@@ -74,7 +74,12 @@ type ModalState =
   | { kind: 'details'; title: string; body: ReactNode };
 
 const emptyData: DashboardData = {
-  users: [], providers: [], aliases: [], keys: [], usage: null, nextCursors: {},
+  users: [],
+  providers: [],
+  aliases: [],
+  keys: [],
+  usage: null,
+  nextCursors: {},
 };
 const tokenKey = 'tlg_admin_token';
 const sidebarCollapsedKey = 'tlg_sidebar_collapsed';

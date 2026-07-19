@@ -262,7 +262,12 @@ export const api = {
     ]);
     const keys: SectionKey[] = ['users', 'providers', 'aliases', 'keys', 'usage'];
     const data: DashboardData = {
-      users: [], providers: [], aliases: [], keys: [], usage: null, nextCursors: {},
+      users: [],
+      providers: [],
+      aliases: [],
+      keys: [],
+      usage: null,
+      nextCursors: {},
     };
     const errors: Partial<Record<SectionKey, string>> = {};
 
@@ -315,7 +320,10 @@ export const api = {
   getKeys: (token: string, cursor?: string | null) =>
     request<PaginatedList<ApiKey>>(token, `/keys?limit=50${cursor ? `&cursor=${cursor}` : ''}`),
   getProviders: (token: string, cursor?: string | null) =>
-    request<PaginatedList<Provider>>(token, `/providers?limit=50${cursor ? `&cursor=${cursor}` : ''}`),
+    request<PaginatedList<Provider>>(
+      token,
+      `/providers?limit=50${cursor ? `&cursor=${cursor}` : ''}`,
+    ),
   getAliases: (token: string, cursor?: string | null) =>
     request<PaginatedList<ModelAlias>>(
       token,

@@ -438,9 +438,9 @@ export async function adminRoutes(
     const query = listQuerySchema.parse(request.query);
     return paginate(
       await prisma.project.findMany({
-      include: { team: { select: { id: true, slug: true, name: true } } },
-      ...cursorPage(query),
-    }),
+        include: { team: { select: { id: true, slug: true, name: true } } },
+        ...cursorPage(query),
+      }),
       query.limit,
     );
   });
@@ -1427,7 +1427,7 @@ function paginate<T extends { id: string }>(
   const items = rows.slice(0, limit).map(map);
   return {
     items,
-    nextCursor: rows.length > limit ? rows[limit - 1]?.id ?? null : null,
+    nextCursor: rows.length > limit ? (rows[limit - 1]?.id ?? null) : null,
   };
 }
 
@@ -1544,7 +1544,9 @@ async function getUsageSummary(
 
 function boundedUsageQuery(query: z.infer<typeof usageQuerySchema>) {
   const to = query.to ? new Date(query.to) : new Date();
-  const from = query.from ? new Date(query.from) : new Date(to.valueOf() - 30 * 24 * 60 * 60 * 1000);
+  const from = query.from
+    ? new Date(query.from)
+    : new Date(to.valueOf() - 30 * 24 * 60 * 60 * 1000);
   const durationDays = (to.valueOf() - from.valueOf()) / (24 * 60 * 60 * 1000);
 
   if (durationDays < 0 || durationDays > usageMaxDays) {
@@ -1556,7 +1558,9 @@ function boundedUsageQuery(query: z.infer<typeof usageQuerySchema>) {
 
 function boundedActivityQuery<T extends { from?: string; to?: string }>(query: T) {
   const to = query.to ? new Date(query.to) : new Date();
-  const from = query.from ? new Date(query.from) : new Date(to.valueOf() - 30 * 24 * 60 * 60 * 1000);
+  const from = query.from
+    ? new Date(query.from)
+    : new Date(to.valueOf() - 30 * 24 * 60 * 60 * 1000);
   const durationDays = (to.valueOf() - from.valueOf()) / (24 * 60 * 60 * 1000);
 
   if (durationDays < 0 || durationDays > usageMaxDays) {
@@ -1962,7 +1966,10 @@ async function getLiteLlmUsage(
   query: { from?: string; to?: string },
 ) {
   const logs = await litellmAdmin.getSpendLogs({ ...query, limit: usageLogLimit });
-  return logs.slice(0, usageLogLimit).map(normalizeLiteLlmSpendLog).filter((record) => record !== null);
+  return logs
+    .slice(0, usageLogLimit)
+    .map(normalizeLiteLlmSpendLog)
+    .filter((record) => record !== null);
 }
 
 async function ensureLiteLlmActivityBackfill(
