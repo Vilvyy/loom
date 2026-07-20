@@ -1023,6 +1023,12 @@ button.sort {
   box-shadow: var(--shadow-menu);
   animation: menu-in 0.12s ease-out;
 }
+.action-menu-floating {
+  position: fixed;
+  top: auto;
+  right: auto;
+  z-index: 30;
+}
 .action-menu-popover button {
   width: 100%;
   min-height: 34px;

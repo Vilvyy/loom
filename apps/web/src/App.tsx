@@ -21,7 +21,8 @@ import {
   Sun,
   UserPlus,
 } from 'lucide-react';
-import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, forwardRef, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   api,
   ApiKey,
@@ -2992,9 +2993,68 @@ function ActionMenu({
   items: Array<{ label: string; onClick: () => void; danger?: boolean }>;
 }) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPosition(null);
+      return;
+    }
+
+    const updatePosition = () => {
+      const button = buttonRef.current;
+      const menu = menuRef.current;
+      if (!button || !menu) return;
+
+      const buttonRect = button.getBoundingClientRect();
+      const menuRect = menu.getBoundingClientRect();
+      const margin = 8;
+      const opensUpward = buttonRect.bottom + margin + menuRect.height > window.innerHeight - margin;
+      setPosition({
+        left: Math.max(margin, Math.min(buttonRect.right - menuRect.width, window.innerWidth - menuRect.width - margin)),
+        top: opensUpward
+          ? Math.max(margin, buttonRect.top - menuRect.height - margin)
+          : buttonRect.bottom + margin,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!buttonRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    };
+
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
   return (
     <div className="action-menu">
       <Button
+        ref={buttonRef}
         tone="utility"
         icon={<MoreHorizontal />}
         aria-haspopup="menu"
@@ -3003,8 +3063,14 @@ function ActionMenu({
       >
         <span className="visually-hidden">{label}</span>
       </Button>
-      {open && (
-        <div className="action-menu-popover" role="menu">
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="action-menu-popover action-menu-floating"
+            role="menu"
+            style={position ?? { visibility: 'hidden' }}
+          >
           {items.map((item) => (
             <button
               key={item.label}
@@ -3018,8 +3084,9 @@ function ActionMenu({
               {item.label}
             </button>
           ))}
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -3234,25 +3301,22 @@ function Field({
   );
 }
 
-function Button({
-  children,
-  icon,
-  tone,
-  loading,
-  ...props
-}: {
-  children: ReactNode;
-  icon?: ReactNode;
-  tone?: 'primary' | 'secondary' | 'utility' | 'danger' | 'danger-ghost';
-  loading?: boolean;
-} & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+const Button = forwardRef<
+  HTMLButtonElement,
+  {
+    children: ReactNode;
+    icon?: ReactNode;
+    tone?: 'primary' | 'secondary' | 'utility' | 'danger' | 'danger-ghost';
+    loading?: boolean;
+  } & React.ButtonHTMLAttributes<HTMLButtonElement>
+>(function Button({ children, icon, tone, loading, ...props }, ref) {
   return (
-    <button className={tone || 'secondary'} {...props}>
+    <button ref={ref} className={tone || 'secondary'} {...props}>
       {loading ? <Loader2 className="spin" /> : icon}
       {children}
     </button>
   );
-}
+});
 
 function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {
   return <span className={`badge ${tone}`}>{children}</span>;
