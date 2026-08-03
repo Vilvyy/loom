@@ -169,6 +169,35 @@ describe('LiteLLM admin payloads', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('reads spend logs from the LiteLLM v2 endpoint', async () => {
+    const requests: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url) => {
+      requests.push(String(url));
+      return jsonResponse(200, { data: [{ model: 'gpt-5.6-terra' }] });
+    }) as typeof fetch;
+
+    try {
+      const client = new HttpLiteLlmAdminClient({
+        LITELLM_PROXY_URL: 'https://llm.example',
+        LITELLM_MASTER_KEY: 'sk-master',
+      } as never);
+
+      const logs = await client.getSpendLogs({
+        from: '2026-08-01T00:00:00.000Z',
+        to: '2026-08-03T00:00:00.000Z',
+        limit: 100,
+      });
+
+      expect(logs).toEqual([{ model: 'gpt-5.6-terra' }]);
+      expect(requests).toEqual([
+        'https://llm.example/spend/logs/v2?summarize=false&start_date=2026-08-01&end_date=2026-08-03&page_size=100',
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 function jsonResponse(status: number, body: unknown) {

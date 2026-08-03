@@ -67,6 +67,7 @@ const usageQuerySchema = z.object({
 
 const usageMaxDays = 90;
 const usageLogLimit = 2_000;
+const modelAliasPattern = /^[a-z0-9][a-z0-9.-]*$/;
 
 const listQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -150,10 +151,7 @@ const rotateProviderKeySchema = z.object({
 });
 
 const createModelAliasSchema = z.object({
-  alias: z
-    .string()
-    .min(1)
-    .regex(/^[a-z0-9][a-z0-9-]*$/),
+  alias: z.string().min(1).regex(modelAliasPattern),
   providerId: z.string().min(1),
   upstreamModel: z.string().min(1),
   description: z.string().min(1).optional(),
@@ -228,11 +226,7 @@ const sectionRecovery: Record<string, string> = {
 };
 
 const updateModelAliasSchema = z.object({
-  alias: z
-    .string()
-    .min(1)
-    .regex(/^[a-z0-9][a-z0-9-]*$/)
-    .optional(),
+  alias: z.string().min(1).regex(modelAliasPattern).optional(),
   providerId: z.string().min(1).optional(),
   upstreamModel: z.string().min(1).optional(),
   description: z.string().min(1).nullable().optional(),

@@ -119,6 +119,33 @@ describe('admin provider routes', () => {
 
     await app.close();
   });
+
+  it('accepts dotted model aliases used by current model names', async () => {
+    const prisma = createMockPrisma();
+    const litellm = new MockLiteLlmAdminClient();
+    const app = await buildApp(env, prisma, litellm);
+
+    const aliasResponse = await app.inject({
+      method: 'POST',
+      url: '/admin/model-aliases',
+      headers: { authorization: `Bearer ${env.ADMIN_TOKEN}` },
+      payload: {
+        alias: 'gpt-5.6-terra',
+        providerId: 'provider-1',
+        upstreamModel: 'openai/gpt-5.6-terra',
+      },
+    });
+
+    expect(aliasResponse.statusCode).toBe(201);
+    expect(litellm.models[0]).toMatchObject({
+      model_name: 'gpt-5.6-terra',
+      litellm_params: {
+        model: 'openai/gpt-5.6-terra',
+      },
+    });
+
+    await app.close();
+  });
 });
 
 class MockLiteLlmAdminClient implements LiteLlmAdminClient {

@@ -162,7 +162,17 @@ export class HttpLiteLlmAdminClient implements LiteLlmAdminClient {
       params.set('page_size', String(query.limit));
     }
 
-    const body = await this.request('GET', `/spend/logs?${params.toString()}`);
+    const queryString = params.toString();
+    let body: unknown;
+    try {
+      body = await this.request('GET', `/spend/logs/v2?${queryString}`);
+    } catch (error) {
+      if (!(error instanceof LiteLlmAdminError) || error.statusCode !== 404) {
+        throw error;
+      }
+
+      body = await this.request('GET', `/spend/logs?${queryString}`);
+    }
     if (Array.isArray(body)) {
       return body;
     }
