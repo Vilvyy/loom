@@ -4,6 +4,7 @@ import {
   buildLiteLlmTeamPayload,
   buildLiteLlmUserPayload,
   HttpLiteLlmAdminClient,
+  LiteLlmAdminError,
   type LiteLlmCreateVirtualKeyInput,
 } from '../src/services/litellmAdminClient.js';
 
@@ -170,12 +171,18 @@ describe('LiteLLM admin payloads', () => {
     }
   });
 
-  it('reads spend logs from the LiteLLM v2 endpoint', async () => {
+  it('reads paginated spend logs from the LiteLLM v2 endpoint', async () => {
     const requests: string[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (url) => {
       requests.push(String(url));
-      return jsonResponse(200, { data: [{ model: 'gpt-5.6-terra' }] });
+      return jsonResponse(200, {
+        data: [{ model: 'gpt-5.6-terra' }],
+        total: 1,
+        page: 1,
+        page_size: 100,
+        total_pages: 1,
+      });
     }) as typeof fetch;
 
     try {
@@ -192,7 +199,76 @@ describe('LiteLLM admin payloads', () => {
 
       expect(logs).toEqual([{ model: 'gpt-5.6-terra' }]);
       expect(requests).toEqual([
-        'https://llm.example/spend/logs/v2?summarize=false&start_date=2026-08-01&end_date=2026-08-03&page_size=100',
+        'https://llm.example/spend/logs/v2?start_date=2026-08-01T00%3A00%3A00.000Z&end_date=2026-08-03T00%3A00%3A00.000Z&page_size=100',
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('clamps spend-log page size to the LiteLLM v2 maximum', async () => {
+    const requests: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url) => {
+      requests.push(String(url));
+      return jsonResponse(200, { data: [] });
+    }) as typeof fetch;
+
+    try {
+      const client = new HttpLiteLlmAdminClient({
+        LITELLM_PROXY_URL: 'https://llm.example',
+        LITELLM_MASTER_KEY: 'sk-master',
+      } as never);
+
+      await client.getSpendLogs({ limit: 2_000 });
+
+      expect(requests).toEqual(['https://llm.example/spend/logs/v2?page_size=100']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('preserves LiteLLM validation details for v2 spend-log failures', async () => {
+    const originalFetch = globalThis.fetch;
+    const detail = [{ loc: ['query', 'page_size'], msg: 'Input should be less than or equal to 100' }];
+    globalThis.fetch = (async () => jsonResponse(422, { detail })) as typeof fetch;
+
+    try {
+      const client = new HttpLiteLlmAdminClient({
+        LITELLM_PROXY_URL: 'https://llm.example',
+        LITELLM_MASTER_KEY: 'sk-master',
+      } as never);
+
+      await expect(client.getSpendLogs({ limit: 100 })).rejects.toMatchObject({
+        statusCode: 422,
+        path: '/spend/logs/v2?page_size=100',
+        body: { detail },
+      } satisfies Partial<LiteLlmAdminError>);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('falls back to the legacy spend-log endpoint when v2 is unavailable', async () => {
+    const requests: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url) => {
+      requests.push(String(url));
+      return String(url).includes('/spend/logs/v2')
+        ? jsonResponse(404, { detail: 'Not Found' })
+        : jsonResponse(200, { logs: [{ model: 'legacy-model' }] });
+    }) as typeof fetch;
+
+    try {
+      const client = new HttpLiteLlmAdminClient({
+        LITELLM_PROXY_URL: 'https://llm.example',
+        LITELLM_MASTER_KEY: 'sk-master',
+      } as never);
+
+      await expect(client.getSpendLogs({ limit: 50 })).resolves.toEqual([{ model: 'legacy-model' }]);
+      expect(requests).toEqual([
+        'https://llm.example/spend/logs/v2?page_size=50',
+        'https://llm.example/spend/logs?page_size=50&summarize=false',
       ]);
     } finally {
       globalThis.fetch = originalFetch;

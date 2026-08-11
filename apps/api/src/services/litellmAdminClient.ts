@@ -149,17 +149,15 @@ export class HttpLiteLlmAdminClient implements LiteLlmAdminClient {
   }
 
   async getSpendLogs(query: LiteLlmSpendLogQuery): Promise<unknown[]> {
-    const params = new URLSearchParams({ summarize: 'false' });
+    const params = new URLSearchParams();
     if (query.from) {
-      params.set('start_date', query.from.slice(0, 10));
+      params.set('start_date', query.from);
     }
     if (query.to) {
-      params.set('end_date', query.to.slice(0, 10));
+      params.set('end_date', query.to);
     }
-    if (query.limit) {
-      // LiteLLM versions that support page_size limit the remote response; older
-      // versions safely ignore this parameter and still preserve compatibility.
-      params.set('page_size', String(query.limit));
+    if (query.limit !== undefined && Number.isFinite(query.limit)) {
+      params.set('page_size', String(Math.min(Math.max(Math.trunc(query.limit), 1), 100)));
     }
 
     const queryString = params.toString();
@@ -171,7 +169,9 @@ export class HttpLiteLlmAdminClient implements LiteLlmAdminClient {
         throw error;
       }
 
-      body = await this.request('GET', `/spend/logs?${queryString}`);
+      const legacyParams = new URLSearchParams(params);
+      legacyParams.set('summarize', 'false');
+      body = await this.request('GET', `/spend/logs?${legacyParams.toString()}`);
     }
     if (Array.isArray(body)) {
       return body;
