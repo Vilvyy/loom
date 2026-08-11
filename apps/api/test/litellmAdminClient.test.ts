@@ -230,7 +230,9 @@ describe('LiteLLM admin payloads', () => {
 
   it('preserves LiteLLM validation details for v2 spend-log failures', async () => {
     const originalFetch = globalThis.fetch;
-    const detail = [{ loc: ['query', 'page_size'], msg: 'Input should be less than or equal to 100' }];
+    const detail = [
+      { loc: ['query', 'page_size'], msg: 'Input should be less than or equal to 100' },
+    ];
     globalThis.fetch = (async () => jsonResponse(422, { detail })) as typeof fetch;
 
     try {
@@ -265,7 +267,9 @@ describe('LiteLLM admin payloads', () => {
         LITELLM_MASTER_KEY: 'sk-master',
       } as never);
 
-      await expect(client.getSpendLogs({ limit: 50 })).resolves.toEqual([{ model: 'legacy-model' }]);
+      await expect(client.getSpendLogs({ limit: 50 })).resolves.toEqual([
+        { model: 'legacy-model' },
+      ]);
       expect(requests).toEqual([
         'https://llm.example/spend/logs/v2?page_size=50',
         'https://llm.example/spend/logs?page_size=50&summarize=false',
