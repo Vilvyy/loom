@@ -170,12 +170,18 @@ describe('LiteLLM admin payloads', () => {
     }
   });
 
-  it('reads spend logs from the LiteLLM v2 endpoint', async () => {
+  it('uses valid v2 pagination and an exclusive end date without sending summarize', async () => {
     const requests: string[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (url) => {
       requests.push(String(url));
-      return jsonResponse(200, { data: [{ model: 'gpt-5.6-terra' }] });
+      return jsonResponse(200, {
+        data: [{ model: 'gpt-5.6-terra' }],
+        total: 1,
+        page: 1,
+        page_size: 100,
+        total_pages: 1,
+      });
     }) as typeof fetch;
 
     try {
@@ -192,7 +198,41 @@ describe('LiteLLM admin payloads', () => {
 
       expect(logs).toEqual([{ model: 'gpt-5.6-terra' }]);
       expect(requests).toEqual([
-        'https://llm.example/spend/logs/v2?summarize=false&start_date=2026-08-01&end_date=2026-08-03&page_size=100',
+        'https://llm.example/spend/logs/v2?page=1&page_size=100&start_date=2026-08-01&end_date=2026-08-04',
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('splits limits above the v2 page-size maximum into valid pages', async () => {
+    const requests: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url) => {
+      const requestUrl = String(url);
+      requests.push(requestUrl);
+      const page = Number(new URL(requestUrl).searchParams.get('page'));
+      return jsonResponse(200, {
+        data: Array.from({ length: page === 1 ? 100 : 1 }, (_, index) => ({ page, index })),
+        total: 101,
+        page,
+        page_size: 100,
+        total_pages: 2,
+      });
+    }) as typeof fetch;
+
+    try {
+      const client = new HttpLiteLlmAdminClient({
+        LITELLM_PROXY_URL: 'https://llm.example',
+        LITELLM_MASTER_KEY: 'sk-master',
+      } as never);
+
+      const logs = await client.getSpendLogs({ limit: 101 });
+
+      expect(logs).toHaveLength(101);
+      expect(requests).toEqual([
+        'https://llm.example/spend/logs/v2?page=1&page_size=100',
+        'https://llm.example/spend/logs/v2?page=2&page_size=1',
       ]);
     } finally {
       globalThis.fetch = originalFetch;

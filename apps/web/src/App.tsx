@@ -21,7 +21,16 @@ import {
   Sun,
   UserPlus,
 } from 'lucide-react';
-import { FormEvent, forwardRef, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  FormEvent,
+  forwardRef,
+  ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 import {
   api,
@@ -3011,9 +3020,13 @@ function ActionMenu({
       const buttonRect = button.getBoundingClientRect();
       const menuRect = menu.getBoundingClientRect();
       const margin = 8;
-      const opensUpward = buttonRect.bottom + margin + menuRect.height > window.innerHeight - margin;
+      const opensUpward =
+        buttonRect.bottom + margin + menuRect.height > window.innerHeight - margin;
       setPosition({
-        left: Math.max(margin, Math.min(buttonRect.right - menuRect.width, window.innerWidth - menuRect.width - margin)),
+        left: Math.max(
+          margin,
+          Math.min(buttonRect.right - menuRect.width, window.innerWidth - menuRect.width - margin),
+        ),
         top: opensUpward
           ? Math.max(margin, buttonRect.top - menuRect.height - margin)
           : buttonRect.bottom + margin,
@@ -3034,7 +3047,8 @@ function ActionMenu({
 
     const closeOnOutsideClick = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (!buttonRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
+      if (!buttonRef.current?.contains(target) && !menuRef.current?.contains(target))
+        setOpen(false);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -3071,19 +3085,19 @@ function ActionMenu({
             role="menu"
             style={position ?? { visibility: 'hidden' }}
           >
-          {items.map((item) => (
-            <button
-              key={item.label}
-              className={item.danger ? 'danger-item' : ''}
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                item.onClick();
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
+            {items.map((item) => (
+              <button
+                key={item.label}
+                className={item.danger ? 'danger-item' : ''}
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  item.onClick();
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
           </div>,
           document.body,
         )}

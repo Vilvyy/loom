@@ -39,6 +39,9 @@ export type LiteLlmSpendLogQuery = {
   limit?: number;
 };
 
+const maxSpendLogPageSize = 100;
+const defaultSpendLogLimit = 250;
+
 export function buildLiteLlmKeyPayload(input: LiteLlmCreateVirtualKeyInput) {
   return {
     key_alias: input.alias,
@@ -149,43 +152,41 @@ export class HttpLiteLlmAdminClient implements LiteLlmAdminClient {
   }
 
   async getSpendLogs(query: LiteLlmSpendLogQuery): Promise<unknown[]> {
-    const params = new URLSearchParams({ summarize: 'false' });
-    if (query.from) {
-      params.set('start_date', query.from.slice(0, 10));
-    }
-    if (query.to) {
-      params.set('end_date', query.to.slice(0, 10));
-    }
-    if (query.limit) {
-      // LiteLLM versions that support page_size limit the remote response; older
-      // versions safely ignore this parameter and still preserve compatibility.
-      params.set('page_size', String(query.limit));
-    }
+    const limit = toSpendLogLimit(query.limit);
+    const pageSize = Math.min(limit, maxSpendLogPageSize);
+    const logs: unknown[] = [];
 
-    const queryString = params.toString();
-    let body: unknown;
     try {
-      body = await this.request('GET', `/spend/logs/v2?${queryString}`);
+      for (let page = 1; logs.length < limit; page += 1) {
+        const params = buildV2SpendLogParams(query, page, Math.min(pageSize, limit - logs.length));
+        const body = await this.request('GET', `/spend/logs/v2?${params}`);
+        const data = getSpendLogData(body);
+        logs.push(...data);
+
+        const totalPages = getTotalPages(body);
+        if (
+          data.length === 0 ||
+          data.length < pageSize ||
+          totalPages === null ||
+          page >= totalPages
+        ) {
+          return logs.slice(0, limit);
+        }
+      }
+
+      return logs;
     } catch (error) {
       if (!(error instanceof LiteLlmAdminError) || error.statusCode !== 404) {
         throw error;
       }
-
-      body = await this.request('GET', `/spend/logs?${queryString}`);
-    }
-    if (Array.isArray(body)) {
-      return body;
     }
 
-    if (isRecord(body) && Array.isArray(body.logs)) {
-      return body.logs;
-    }
-
-    if (isRecord(body) && Array.isArray(body.data)) {
-      return body.data;
-    }
-
-    return [];
+    // v1 accepts summarize; do not send it to the stricter v2 endpoint.
+    const legacyParams = buildLegacySpendLogParams(query, pageSize);
+    return getSpendLogData(await this.request('GET', `/spend/logs?${legacyParams}`)).slice(
+      0,
+      limit,
+    );
   }
 
   async upsertModel(payload: unknown): Promise<void> {
@@ -276,6 +277,55 @@ export class HttpLiteLlmAdminClient implements LiteLlmAdminClient {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function toSpendLogLimit(limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) {
+    return defaultSpendLogLimit;
+  }
+
+  return Math.max(1, Math.floor(limit));
+}
+
+function buildV2SpendLogParams(query: LiteLlmSpendLogQuery, page: number, pageSize: number) {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (query.from) params.set('start_date', query.from.slice(0, 10));
+  if (query.to) params.set('end_date', toExclusiveEndDate(query.to));
+  return params.toString();
+}
+
+function buildLegacySpendLogParams(query: LiteLlmSpendLogQuery, pageSize: number) {
+  const params = new URLSearchParams({ summarize: 'false', page_size: String(pageSize) });
+  if (query.from) params.set('start_date', query.from.slice(0, 10));
+  if (query.to) params.set('end_date', toExclusiveEndDate(query.to));
+  return params.toString();
+}
+
+function toExclusiveEndDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return value.slice(0, 10);
+
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function getSpendLogData(body: unknown): unknown[] {
+  if (Array.isArray(body)) return body;
+  if (isRecord(body) && Array.isArray(body.logs)) return body.logs;
+  if (isRecord(body) && Array.isArray(body.data)) return body.data;
+  return [];
+}
+
+function getTotalPages(body: unknown): number | null {
+  if (
+    !isRecord(body) ||
+    typeof body.total_pages !== 'number' ||
+    !Number.isInteger(body.total_pages)
+  ) {
+    return null;
+  }
+
+  return body.total_pages;
 }
 
 function getModelName(payload: unknown) {
